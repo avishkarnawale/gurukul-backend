@@ -74,16 +74,17 @@ metaRouter.get('/classes', protect, authorize('staff', 'admin'), getClasses);
 // ── Fees ─────────────────────────────────────────────────────────────────────
 const feesRouter = express.Router();
 const { createFee, createBulkFees, recordPayment, getMyFees, getMyFeeReceipt, assignMissingFees, getStudentFees, getAllPendingFees, getAllFees, updateFee, deleteFee } = require('../controllers/feesController');
-feesRouter.get('/', protect, authorize('staff', 'admin'), getAllFees);
-feesRouter.post('/', protect, authorize('staff', 'admin'), createFee);
-feesRouter.post('/bulk', protect, authorize('staff', 'admin'), createBulkFees);
-feesRouter.post('/assign-missing', protect, authorize('staff', 'admin'), assignMissingFees);
+// Fees management is owner/admin only — teachers (staff) have no fee access.
+feesRouter.get('/', protect, authorize('admin'), getAllFees);
+feesRouter.post('/', protect, authorize('admin'), createFee);
+feesRouter.post('/bulk', protect, authorize('admin'), createBulkFees);
+feesRouter.post('/assign-missing', protect, authorize('admin'), assignMissingFees);
 feesRouter.get('/me', protect, authorize('student'), getMyFees);
 feesRouter.get('/me/:feeId/receipt/:paymentId', protect, authorize('student'), getMyFeeReceipt);
-feesRouter.get('/pending', protect, authorize('staff', 'admin'), getAllPendingFees);
-feesRouter.get('/student/:studentId', protect, authorize('staff', 'admin'), getStudentFees);
-feesRouter.post('/:id/pay', protect, authorize('staff', 'admin'), recordPayment);
-feesRouter.put('/:id', protect, authorize('staff', 'admin'), updateFee);
+feesRouter.get('/pending', protect, authorize('admin'), getAllPendingFees);
+feesRouter.get('/student/:studentId', protect, authorize('admin'), getStudentFees);
+feesRouter.post('/:id/pay', protect, authorize('admin'), recordPayment);
+feesRouter.put('/:id', protect, authorize('admin'), updateFee);
 feesRouter.delete('/:id', protect, authorize('admin'), deleteFee);
 
 // ── Notes & PYQs ─────────────────────────────────────────────────────────────
@@ -110,7 +111,8 @@ const {
 } = require('../controllers/userController');
 const { getStudentSummary, getStudentSummaryPdf } = require('../controllers/studentSummaryController');
 userRouter.get('/', protect, authorize('staff', 'admin'), getAllUsers);
-userRouter.post('/', protect, authorize('staff', 'admin'), createUser);
+// Creating students/teachers is owner/admin only — teachers can view, not manage.
+userRouter.post('/', protect, authorize('admin'), createUser);
 userRouter.get('/:id/summary/pdf', protect, authorize('staff', 'admin'), getStudentSummaryPdf);
 userRouter.get('/:id/summary', protect, authorize('staff', 'admin'), getStudentSummary);
 userRouter.get('/:id', protect, authorize('staff', 'admin'), getUser);

@@ -8,7 +8,6 @@ const { asyncHandler } = require('../middleware/error');
 const { parseClassId } = require('../utils/classes');
 
 const DEFAULT_FEE_TERM = 'Term 1 2025-26';
-const DEFAULT_FEE_AMOUNT = 7500;
 
 // @desc    Get all users (with filters)
 // @route   GET /api/users?role=student&class=Class 10 A
@@ -51,13 +50,18 @@ exports.createUser = asyncHandler(async (req, res) => {
   }
   const user = await User.create(payload);
 
-  if (role === 'student') {
+  // Fees are set manually per student (different standards charge different fees).
+  // Only create a fee record if an amount was explicitly provided when adding.
+  const feeAmount = Number(req.body.feeAmount);
+  if (role === 'student' && Number.isFinite(feeAmount) && feeAmount > 0) {
     await Fee.create({
       student: user._id,
-      term: DEFAULT_FEE_TERM,
-      totalAmount: DEFAULT_FEE_AMOUNT,
-      dueDate: new Date(new Date().setMonth(new Date().getMonth() + 3)),
-      description: 'Tuition Fee',
+      term: req.body.feeTerm || DEFAULT_FEE_TERM,
+      totalAmount: feeAmount,
+      dueDate: req.body.feeDueDate
+        ? new Date(req.body.feeDueDate)
+        : new Date(new Date().setMonth(new Date().getMonth() + 3)),
+      description: req.body.feeDescription || 'Tuition Fee',
       payments: [],
     });
   }
