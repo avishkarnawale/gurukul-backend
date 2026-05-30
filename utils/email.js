@@ -12,14 +12,26 @@ function getTransport() {
   if (!user || !pass) return null;
 
   if (!cachedTransport) {
+    const port = Number(process.env.EMAIL_PORT) || 587; // 587 STARTTLS is the most firewall-friendly
     cachedTransport = nodemailer.createTransport({
       host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: Number(process.env.EMAIL_PORT) || 465,
-      secure: String(process.env.EMAIL_SECURE ?? 'true') !== 'false', // 465 = SSL
+      port,
+      secure: String(process.env.EMAIL_SECURE ?? (port === 465 ? 'true' : 'false')) === 'true',
       auth: { user, pass },
+      // Fail fast instead of hanging the HTTP request if the network blocks SMTP.
+      connectionTimeout: 12000,
+      greetingTimeout: 8000,
+      socketTimeout: 15000,
     });
   }
   return cachedTransport;
+}
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
 }
 
 /** Send a one-time password by email. Returns { sent, reason }. */
@@ -29,7 +41,7 @@ async function sendEmailOtp(to, otp) {
 
   const from = process.env.EMAIL_FROM || `"Gurukul Classes" <${process.env.EMAIL_USER}>`;
   try {
-    await transport.sendMail({
+    await withTimeout(transport.sendMail({
       from,
       to,
       subject: 'Your Gurukul Classes password reset code',
@@ -41,7 +53,7 @@ async function sendEmailOtp(to, otp) {
           <p style="font-size:32px;font-weight:700;letter-spacing:8px;color:#111;margin:16px 0">${otp}</p>
           <p style="color:#888;font-size:13px">This code expires in 10 minutes. If you didn't request a password reset, you can safely ignore this email.</p>
         </div>`,
-    });
+    }), 18000, 'Email send');
     return { sent: true };
   } catch (e) {
     return { sent: false, reason: e.message };
