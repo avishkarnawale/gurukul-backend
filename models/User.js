@@ -25,6 +25,12 @@ const userSchema = new mongoose.Schema({
   // Common
   avatar:      { type: String },
   isActive:    { type: Boolean, default: true },
+
+  // Password reset via OTP (admin/staff) — never returned by default
+  resetOtpHash:     { type: String, select: false },
+  resetOtpExpires:  { type: Date, select: false },
+  resetOtpAttempts: { type: Number, select: false, default: 0 },
+  resetOtpSentAt:   { type: Date, select: false },
 }, { timestamps: true });
 
 userSchema.pre('save', async function (next) {

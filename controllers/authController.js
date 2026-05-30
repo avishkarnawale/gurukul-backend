@@ -1,6 +1,27 @@
+const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const { asyncHandler } = require('../middleware/error');
 const { sendTokenResponse } = require('../utils/token');
+const { sendWhatsAppOtp, OWNER_WA } = require('../utils/whatsapp');
+
+const OTP_TTL_MS = 10 * 60 * 1000;   // 10 minutes
+const OTP_RESEND_MS = 60 * 1000;     // 60s cooldown between sends
+const OTP_MAX_ATTEMPTS = 5;
+
+function maskPhone(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length < 4) return '••••';
+  const last4 = digits.slice(-4);
+  return `+91 ••••••${last4}`;
+}
+
+// Owner is the only admin; find the admin to reset. Email is optional and only
+// needed to disambiguate if multiple admins ever exist.
+async function findResetAdmin(email) {
+  if (email) return User.findOne({ email: String(email).toLowerCase(), role: 'admin' });
+  const admins = await User.find({ role: 'admin' }).limit(2);
+  return admins.length === 1 ? admins[0] : null;
+}
 
 // @desc    Student login — Roll Number + Date of Birth
 // @route   POST /api/auth/student-login
@@ -35,6 +56,93 @@ exports.staffLogin = asyncHandler(async (req, res) => {
     return res.status(401).json({ success: false, error: 'Invalid credentials', message: 'Invalid credentials' });
 
   sendTokenResponse(user, 200, res);
+});
+
+// @desc    Request a password-reset OTP (admin/owner) — sent via WhatsApp
+// @route   POST /api/auth/forgot-password
+// @access  Public
+exports.forgotPassword = asyncHandler(async (req, res) => {
+  const admin = await findResetAdmin(req.body.email);
+  if (!admin) {
+    return res.status(404).json({
+      success: false,
+      message: req.body.email
+        ? 'No admin account found for this email'
+        : 'Could not identify the admin account. Please enter your admin email.',
+    });
+  }
+
+  const full = await User.findById(admin._id).select('+resetOtpSentAt');
+  if (full.resetOtpSentAt && Date.now() - new Date(full.resetOtpSentAt).getTime() < OTP_RESEND_MS) {
+    return res.status(429).json({ success: false, message: 'Please wait a minute before requesting another code.' });
+  }
+
+  // Use the admin's own phone, else fall back to the configured owner number.
+  const phone = admin.phone || OWNER_WA;
+  if (!phone) {
+    return res.status(400).json({ success: false, message: 'No phone number is set on the admin account.' });
+  }
+
+  // Generate 6-digit OTP, store only its hash.
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  full.resetOtpHash = await bcrypt.hash(otp, 10);
+  full.resetOtpExpires = new Date(Date.now() + OTP_TTL_MS);
+  full.resetOtpAttempts = 0;
+  full.resetOtpSentAt = new Date();
+  await full.save();
+
+  const result = await sendWhatsAppOtp(phone, otp).catch((e) => ({ sent: false, reason: e.message }));
+  // Fallback so the owner is never locked out before WhatsApp is configured.
+  if (!result.sent) {
+    console.log(`[forgot-password] WhatsApp not delivered (${result.reason}). OTP for ${admin.email}: ${otp}`);
+  }
+
+  res.json({
+    success: true,
+    message: result.sent
+      ? 'OTP sent to your WhatsApp number.'
+      : 'OTP generated. WhatsApp delivery is not configured yet — check the server logs for the code.',
+    maskedPhone: maskPhone(phone),
+    delivered: !!result.sent,
+  });
+});
+
+// @desc    Reset password using the OTP
+// @route   POST /api/auth/reset-password
+// @access  Public
+exports.resetPassword = asyncHandler(async (req, res) => {
+  const { otp, newPassword, email } = req.body;
+  if (!otp || !newPassword)
+    return res.status(400).json({ success: false, message: 'OTP and new password are required' });
+  if (String(newPassword).length < 6)
+    return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+
+  const admin = await findResetAdmin(email);
+  if (!admin) return res.status(404).json({ success: false, message: 'Admin account not found' });
+
+  const full = await User.findById(admin._id).select('+password +resetOtpHash +resetOtpExpires +resetOtpAttempts');
+  if (!full.resetOtpHash || !full.resetOtpExpires)
+    return res.status(400).json({ success: false, message: 'No active reset request. Please request a new code.' });
+  if (Date.now() > new Date(full.resetOtpExpires).getTime())
+    return res.status(400).json({ success: false, message: 'This code has expired. Please request a new one.' });
+  if (full.resetOtpAttempts >= OTP_MAX_ATTEMPTS)
+    return res.status(429).json({ success: false, message: 'Too many incorrect attempts. Please request a new code.' });
+
+  const match = await bcrypt.compare(String(otp), full.resetOtpHash);
+  if (!match) {
+    full.resetOtpAttempts += 1;
+    await full.save();
+    return res.status(400).json({ success: false, message: 'Incorrect code. Please try again.' });
+  }
+
+  full.password = newPassword; // hashed by pre-save hook
+  full.resetOtpHash = undefined;
+  full.resetOtpExpires = undefined;
+  full.resetOtpAttempts = 0;
+  full.resetOtpSentAt = undefined;
+  await full.save();
+
+  sendTokenResponse(full, 200, res);
 });
 
 // @desc    Get logged-in user profile
