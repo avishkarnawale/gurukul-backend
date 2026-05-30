@@ -3,6 +3,7 @@ const User = require('../models/User');
 const { asyncHandler } = require('../middleware/error');
 const { sendTokenResponse } = require('../utils/token');
 const { sendWhatsAppOtp, OWNER_WA } = require('../utils/whatsapp');
+const { sendEmailOtp, OWNER_EMAIL } = require('../utils/email');
 
 const OTP_TTL_MS = 10 * 60 * 1000;   // 10 minutes
 const OTP_RESEND_MS = 60 * 1000;     // 60s cooldown between sends
@@ -13,6 +14,13 @@ function maskPhone(phone) {
   if (digits.length < 4) return '••••';
   const last4 = digits.slice(-4);
   return `+91 ••••••${last4}`;
+}
+
+function maskEmail(email) {
+  const [name = '', domain = ''] = String(email || '').split('@');
+  if (!domain) return '••••';
+  const visible = name.slice(0, 2);
+  return `${visible}••••@${domain}`;
 }
 
 // Owner is the only admin; find the admin to reset. Email is optional and only
@@ -77,11 +85,10 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
     return res.status(429).json({ success: false, message: 'Please wait a minute before requesting another code.' });
   }
 
-  // Use the admin's own phone, else fall back to the configured owner number.
+  // Delivery targets: owner email (primary), then the admin's phone / configured
+  // owner WhatsApp number (fallback).
+  const email = OWNER_EMAIL || admin.email;
   const phone = admin.phone || OWNER_WA;
-  if (!phone) {
-    return res.status(400).json({ success: false, message: 'No phone number is set on the admin account.' });
-  }
 
   // Generate 6-digit OTP, store only its hash.
   const otp = String(Math.floor(100000 + Math.random() * 900000));
@@ -91,19 +98,40 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
   full.resetOtpSentAt = new Date();
   await full.save();
 
-  const result = await sendWhatsAppOtp(phone, otp).catch((e) => ({ sent: false, reason: e.message }));
-  // Fallback so the owner is never locked out before WhatsApp is configured.
-  if (!result.sent) {
-    console.log(`[forgot-password] WhatsApp not delivered (${result.reason}). OTP for ${admin.email}: ${otp}`);
+  // Try email first, then WhatsApp.
+  let channel = null;
+  let maskedContact = null;
+
+  if (email) {
+    const r = await sendEmailOtp(email, otp).catch((e) => ({ sent: false, reason: e.message }));
+    if (r.sent) {
+      channel = 'email';
+      maskedContact = maskEmail(email);
+    }
+  }
+  if (!channel && phone) {
+    const r = await sendWhatsAppOtp(phone, otp).catch((e) => ({ sent: false, reason: e.message }));
+    if (r.sent) {
+      channel = 'whatsapp';
+      maskedContact = maskPhone(phone);
+    }
+  }
+
+  // Fallback so the owner is never locked out before delivery is configured.
+  if (!channel) {
+    console.log(`[forgot-password] Delivery not configured. OTP for ${email || phone}: ${otp}`);
+    maskedContact = email ? maskEmail(email) : maskPhone(phone);
   }
 
   res.json({
     success: true,
-    message: result.sent
-      ? 'OTP sent to your WhatsApp number.'
-      : 'OTP generated. WhatsApp delivery is not configured yet — check the server logs for the code.',
-    maskedPhone: maskPhone(phone),
-    delivered: !!result.sent,
+    message: channel
+      ? `OTP sent to your ${channel === 'email' ? 'email' : 'WhatsApp'}.`
+      : 'OTP generated. Delivery is not configured yet — check the server logs for the code.',
+    channel: channel || 'log',
+    maskedContact,
+    maskedPhone: maskedContact, // backward-compat for older clients
+    delivered: !!channel,
   });
 });
 
