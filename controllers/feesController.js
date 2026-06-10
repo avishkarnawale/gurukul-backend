@@ -37,10 +37,16 @@ exports.recordPayment = asyncHandler(async (req, res) => {
 });
 
 // @desc    Get all fee records (admin)
-// @route   GET /api/fees
+// @route   GET /api/fees?class=Class 10|SSC
 // @access  Staff/Admin
 exports.getAllFees = asyncHandler(async (req, res) => {
-  const fees = await Fee.find()
+  const { class: cls } = req.query;
+  const filter = {};
+  if (cls) {
+    const studentIds = await User.find({ role: 'student', class: cls }).distinct('_id');
+    filter.student = { $in: studentIds };
+  }
+  const fees = await Fee.find(filter)
     .populate('student', 'name rollNumber class')
     .sort({ dueDate: 1 });
   res.json({ success: true, count: fees.length, data: fees });
@@ -124,8 +130,12 @@ exports.assignMissingFees = asyncHandler(async (req, res) => {
   const term = req.body.term || DEFAULT_FEE_TERM;
   const totalAmount = Number(req.body.totalAmount ?? DEFAULT_FEE_AMOUNT);
   const dueDate = req.body.dueDate ? new Date(req.body.dueDate) : new Date(new Date().setMonth(new Date().getMonth() + 3));
+  const cls = req.body.class || req.query.class;
 
-  const students = await User.find({ role: 'student' }).select('_id');
+  const studentFilter = { role: 'student' };
+  if (cls) studentFilter.class = cls;
+
+  const students = await User.find(studentFilter).select('_id');
   const existing = await Fee.find({ term }).distinct('student');
   const existingSet = new Set(existing.map(String));
 
@@ -141,11 +151,13 @@ exports.assignMissingFees = asyncHandler(async (req, res) => {
     }));
 
   if (!toCreate.length) {
-    return res.json({ success: true, message: 'All students already have fee records for this term', count: 0 });
+    const scope = cls ? ` in ${cls}` : '';
+    return res.json({ success: true, message: `All students${scope} already have fee records for this term`, count: 0 });
   }
 
   const fees = await Fee.insertMany(toCreate);
-  res.status(201).json({ success: true, count: fees.length, message: `Created ${fees.length} fee records` });
+  const scope = cls ? ` for ${cls}` : '';
+  res.status(201).json({ success: true, count: fees.length, message: `Created ${fees.length} fee records${scope}` });
 });
 
 // @desc    Get fees for a specific student
