@@ -1,11 +1,27 @@
 const Grade = require('../models/Grade');
+const User = require('../models/User');
 const { asyncHandler } = require('../middleware/error');
 
 // @desc    Add grade
 // @route   POST /api/grades
 // @access  Staff only
 exports.addGrade = asyncHandler(async (req, res) => {
-  const grade = await Grade.create({ ...req.body, addedBy: req.user._id });
+  const { student, class: cls } = req.body;
+  if (!student) {
+    return res.status(400).json({ success: false, message: 'Student is required' });
+  }
+  const user = await User.findById(student).select('role class');
+  if (!user || user.role !== 'student') {
+    return res.status(400).json({ success: false, message: 'Invalid student' });
+  }
+  if (cls && user.class !== cls) {
+    return res.status(400).json({
+      success: false,
+      message: 'This student is not enrolled in the selected class',
+    });
+  }
+  const { class: _omit, ...gradeFields } = req.body;
+  const grade = await Grade.create({ ...gradeFields, addedBy: req.user._id });
   res.status(201).json({ success: true, data: grade });
 });
 
