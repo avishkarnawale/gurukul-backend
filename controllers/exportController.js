@@ -4,6 +4,7 @@ const Attendance = require('../models/Attendance');
 const { asyncHandler } = require('../middleware/error');
 const { formatClassLabel } = require('../utils/classes');
 const { dedupeByDay, dayKey } = require('../utils/attendance');
+const { toDateString } = require('../utils/date');
 const {
   buildClassFeesPdf,
   buildClassStudentsPdf,
@@ -96,9 +97,10 @@ exports.exportMonthlyAttendancePdf = asyncHandler(async (req, res) => {
 
   const year = Number(m[1]);
   const mon = Number(m[2]);
-  const start = new Date(year, mon - 1, 1);
-  const end = new Date(year, mon, 0, 23, 59, 59, 999);
-  const daysInMonth = end.getDate();
+  // Attendance dates are stored as UTC calendar days — match that when building the grid.
+  const start = new Date(Date.UTC(year, mon - 1, 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(year, mon, 0, 23, 59, 59, 999));
+  const daysInMonth = end.getUTCDate();
 
   const students = await User.find({ role: 'student', class: cls })
     .select('name rollNumber')
@@ -106,7 +108,6 @@ exports.exportMonthlyAttendancePdf = asyncHandler(async (req, res) => {
 
   const studentIds = students.map((s) => s._id);
   const raw = await Attendance.find({
-    class: cls,
     student: { $in: studentIds },
     date: { $gte: start, $lte: end },
   });
@@ -114,18 +115,22 @@ exports.exportMonthlyAttendancePdf = asyncHandler(async (req, res) => {
 
   const grid = {};
   for (const r of records) {
-    const sid = String(r.student);
+    const sid = String(r.student?._id ?? r.student);
     if (!grid[sid]) grid[sid] = {};
     grid[sid][dayKey(r.date)] = r.status;
   }
 
   const days = [];
   for (let d = 1; d <= daysInMonth; d++) {
-    const dt = new Date(year, mon - 1, d);
-    days.push({ day: d, key: dayKey(dt) });
+    const key = toDateString(new Date(Date.UTC(year, mon - 1, d, 0, 0, 0, 0)));
+    days.push({ day: d, key });
   }
 
-  const monthLabel = start.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  const monthLabel = new Date(Date.UTC(year, mon - 1, 1)).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
   const studentRows = students.map((s) => ({
     id: String(s._id),
     name: s.name,

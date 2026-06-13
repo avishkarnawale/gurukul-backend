@@ -164,8 +164,9 @@ function buildMonthlyAttendancePdf({ classLabel, monthLabel, students, days, gri
     const row = grid[s.id] || {};
     days.forEach((d, i) => {
       const st = row[d.key];
-      const sym = st === 'present' ? 'P' : st === 'absent' ? 'A' : '-';
-      const color = st === 'present' ? '#16a34a' : st === 'absent' ? '#dc2626' : '#94a3b8';
+      const sym = st === 'present' ? 'P' : st === 'absent' ? 'A' : st === 'late' ? 'L' : '-';
+      const color =
+        st === 'present' ? '#16a34a' : st === 'absent' ? '#dc2626' : st === 'late' ? '#ca8a04' : '#94a3b8';
       doc.fillColor(color).text(sym, x0 + nameW + rollW + i * dayW, y, { width: dayW, align: 'center' });
     });
     doc.fillColor('#0f172a');
@@ -177,7 +178,7 @@ function buildMonthlyAttendancePdf({ classLabel, monthLabel, students, days, gri
   }
 
   doc.moveDown(1);
-  doc.fontSize(8).fillColor('#64748b').text('P = Present, A = Absent, - = Not marked', x0);
+  doc.fontSize(8).fillColor('#64748b').text('P = Present, A = Absent, L = Late, - = Not marked', x0);
 
   doc.end();
   return done;
