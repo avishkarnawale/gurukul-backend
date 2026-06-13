@@ -3,7 +3,7 @@ const Fee = require('../models/Fee');
 const Attendance = require('../models/Attendance');
 const { asyncHandler } = require('../middleware/error');
 const { formatClassLabel } = require('../utils/classes');
-const { dedupeByDay, dayKey } = require('../utils/attendance');
+const { buildStudentDayGrid } = require('../utils/attendance');
 const { toDateString } = require('../utils/date');
 const {
   buildClassFeesPdf,
@@ -111,14 +111,7 @@ exports.exportMonthlyAttendancePdf = asyncHandler(async (req, res) => {
     student: { $in: studentIds },
     date: { $gte: start, $lte: end },
   });
-  const records = dedupeByDay(raw);
-
-  const grid = {};
-  for (const r of records) {
-    const sid = String(r.student?._id ?? r.student);
-    if (!grid[sid]) grid[sid] = {};
-    grid[sid][dayKey(r.date)] = r.status;
-  }
+  const grid = buildStudentDayGrid(raw);
 
   const days = [];
   for (let d = 1; d <= daysInMonth; d++) {

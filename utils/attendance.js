@@ -16,7 +16,7 @@ function preferRecord(a, b) {
   return bu >= au ? b : a;
 }
 
-/** One row per calendar day for student-facing views. */
+/** One row per calendar day (single-student lists). */
 function dedupeByDay(records) {
   const byDay = new Map();
   for (const r of records) {
@@ -27,11 +27,37 @@ function dedupeByDay(records) {
   return Array.from(byDay.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
+function studentIdOf(record) {
+  return String(record.student?._id ?? record.student);
+}
+
+/** Grid for class/month PDF: one status per student per calendar day. */
+function buildStudentDayGrid(records) {
+  const byStudentDay = new Map();
+  for (const r of records) {
+    const sid = studentIdOf(r);
+    const dk = dayKey(r.date);
+    const key = `${sid}|${dk}`;
+    const prev = byStudentDay.get(key);
+    byStudentDay.set(key, prev ? preferRecord(prev, r) : r);
+  }
+
+  const grid = {};
+  for (const r of byStudentDay.values()) {
+    const sid = studentIdOf(r);
+    const dk = dayKey(r.date);
+    if (!grid[sid]) grid[sid] = {};
+    grid[sid][dk] = r.status;
+  }
+  return grid;
+}
+
 module.exports = {
   DAILY_SUBJECT,
   dayKey,
   preferRecord,
   dedupeByDay,
+  buildStudentDayGrid,
   startOfDay,
   parseDayRange,
 };
