@@ -52,12 +52,40 @@ function buildStudentDayGrid(records) {
   return grid;
 }
 
+/** Days class took attendance + per-student present/absent on those days. */
+function computeMonthlyAttendanceStats(records, grid, studentIds) {
+  const operationalDayKeys = new Set();
+  for (const r of records) {
+    if (r.status === 'present' || r.status === 'absent' || r.status === 'late') {
+      operationalDayKeys.add(dayKey(r.date));
+    }
+  }
+
+  const operationalDays = operationalDayKeys.size;
+  const statsByStudent = {};
+
+  for (const sid of studentIds) {
+    const row = grid[sid] || {};
+    let present = 0;
+    let absent = 0;
+    for (const key of operationalDayKeys) {
+      const st = row[key];
+      if (st === 'present' || st === 'late') present += 1;
+      else if (st === 'absent') absent += 1;
+    }
+    statsByStudent[sid] = { operationalDays, present, absent };
+  }
+
+  return { operationalDays, statsByStudent };
+}
+
 module.exports = {
   DAILY_SUBJECT,
   dayKey,
   preferRecord,
   dedupeByDay,
   buildStudentDayGrid,
+  computeMonthlyAttendanceStats,
   startOfDay,
   parseDayRange,
 };

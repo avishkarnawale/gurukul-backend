@@ -1,15 +1,17 @@
 const User = require('../models/User');
 const Fee = require('../models/Fee');
 const Attendance = require('../models/Attendance');
+const Grade = require('../models/Grade');
 const { asyncHandler } = require('../middleware/error');
 const { formatClassLabel } = require('../utils/classes');
-const { buildStudentDayGrid } = require('../utils/attendance');
+const { buildStudentDayGrid, computeMonthlyAttendanceStats } = require('../utils/attendance');
 const { toDateString } = require('../utils/date');
 const {
   buildClassFeesPdf,
   buildClassStudentsPdf,
   buildMonthlyAttendancePdf,
 } = require('../utils/exportPdfs');
+const { buildClassResultsPdf, buildClassResultsDoc } = require('../utils/exportResults');
 
 function sendPdf(res, buffer, filename) {
   res.setHeader('Content-Type', 'application/pdf');
@@ -17,8 +19,32 @@ function sendPdf(res, buffer, filename) {
   res.send(buffer);
 }
 
+function sendWord(res, buffer, filename) {
+  res.setHeader('Content-Type', 'application/msword');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buffer);
+}
+
 function safeFilename(s) {
   return String(s || 'report').replace(/[^\w\-]+/g, '-').replace(/-+/g, '-').slice(0, 60);
+}
+
+async function loadClassResultRows(cls) {
+  const studentIds = await User.find({ role: 'student', class: cls }).distinct('_id');
+  const grades = await Grade.find({ student: { $in: studentIds } })
+    .populate('student', 'name rollNumber class')
+    .sort({ createdAt: -1 });
+
+  return grades.map((g) => ({
+    studentName: g.student?.name,
+    rollNumber: g.student?.rollNumber,
+    subject: g.subject,
+    examType: g.examType,
+    marksObtained: g.marksObtained,
+    totalMarks: g.totalMarks,
+    grade: g.grade,
+    date: g.createdAt,
+  }));
 }
 
 // @route GET /api/fees/export/pdf?class=Class 10|SSC
@@ -130,13 +156,44 @@ exports.exportMonthlyAttendancePdf = asyncHandler(async (req, res) => {
     rollNumber: s.rollNumber,
   }));
 
+  const studentIdStrings = studentRows.map((s) => s.id);
+  const { operationalDays, statsByStudent } = computeMonthlyAttendanceStats(raw, grid, studentIdStrings);
+
   const pdf = await buildMonthlyAttendancePdf({
     classLabel: formatClassLabel(cls) || cls,
     monthLabel,
     students: studentRows,
     days,
     grid,
+    operationalDays,
+    statsByStudent,
   });
 
   sendPdf(res, pdf, `Gurukul-Attendance-${safeFilename(formatClassLabel(cls))}-${month}.pdf`);
+});
+
+// @route GET /api/results/export/pdf?class=Class 10|CBSE
+exports.exportClassResultsPdf = asyncHandler(async (req, res) => {
+  const cls = req.query.class;
+  if (!cls) {
+    return res.status(400).json({ success: false, message: 'class query parameter is required' });
+  }
+
+  const classLabel = formatClassLabel(cls) || cls;
+  const rows = await loadClassResultRows(cls);
+  const pdf = await buildClassResultsPdf({ classLabel, rows });
+  sendPdf(res, pdf, `Gurukul-Results-${safeFilename(classLabel)}.pdf`);
+});
+
+// @route GET /api/results/export/doc?class=Class 10|CBSE
+exports.exportClassResultsDoc = asyncHandler(async (req, res) => {
+  const cls = req.query.class;
+  if (!cls) {
+    return res.status(400).json({ success: false, message: 'class query parameter is required' });
+  }
+
+  const classLabel = formatClassLabel(cls) || cls;
+  const rows = await loadClassResultRows(cls);
+  const doc = buildClassResultsDoc({ classLabel, rows });
+  sendWord(res, doc, `Gurukul-Results-${safeFilename(classLabel)}.doc`);
 });

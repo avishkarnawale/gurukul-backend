@@ -34,8 +34,11 @@ homeworkRouter.delete('/:id', protect, authorize('staff', 'admin'), deleteHomewo
 // ── Grades / Results ─────────────────────────────────────────────────────────
 const gradeRouter = express.Router();
 const { addGrade, bulkAddGrades, getStudentGrades, getClassGrades, updateGrade, deleteGrade } = require('../controllers/gradeController');
+const { exportClassResultsPdf, exportClassResultsDoc } = require('../controllers/exportController');
 gradeRouter.post('/', protect, authorize('staff', 'admin'), addGrade);
 gradeRouter.post('/bulk', protect, authorize('staff', 'admin'), bulkAddGrades);
+gradeRouter.get('/export/pdf', protect, authorize('staff', 'admin'), exportClassResultsPdf);
+gradeRouter.get('/export/doc', protect, authorize('staff', 'admin'), exportClassResultsDoc);
 gradeRouter.get('/me', protect, authorize('student'), getStudentGrades);
 gradeRouter.get('/student/:studentId', protect, authorize('staff', 'admin'), getStudentGrades);
 gradeRouter.get('/class', protect, authorize('staff', 'admin'), getClassGrades);
@@ -63,6 +66,19 @@ notificationRouter.get('/me', protect, authorize('student'), getMyNotifications)
 notificationRouter.get('/me/unread-count', protect, authorize('student'), getUnreadCount);
 notificationRouter.put('/me/read-all', protect, authorize('student'), markAllRead);
 notificationRouter.put('/:id/read', protect, authorize('student'), markRead);
+
+// ── Academic Calendar ────────────────────────────────────────────────────────
+const calendarRouter = express.Router();
+const {
+  getCalendarEvents,
+  createCalendarEvent,
+  updateCalendarEvent,
+  deleteCalendarEvent,
+} = require('../controllers/calendarController');
+calendarRouter.get('/', protect, getCalendarEvents);
+calendarRouter.post('/', protect, authorize('staff', 'admin'), createCalendarEvent);
+calendarRouter.put('/:id', protect, authorize('staff', 'admin'), updateCalendarEvent);
+calendarRouter.delete('/:id', protect, authorize('staff', 'admin'), deleteCalendarEvent);
 
 // ── Contacts (student → teachers) ─────────────────────────────────────────────
 const contactsRouter = express.Router();
@@ -139,4 +155,5 @@ module.exports = {
   metaRouter,
   notificationRouter,
   contactsRouter,
+  calendarRouter,
 };

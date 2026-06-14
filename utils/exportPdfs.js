@@ -129,18 +129,20 @@ function buildClassStudentsPdf({ classLabel, students }) {
   return done;
 }
 
-function buildMonthlyAttendancePdf({ classLabel, monthLabel, students, days, grid }) {
+function buildMonthlyAttendancePdf({ classLabel, monthLabel, students, days, grid, operationalDays, statsByStudent }) {
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30 });
   const done = collectPdf(doc);
 
   pdfHeader(doc, 'Monthly Attendance Report', `${classLabel} · ${monthLabel}`);
+  doc.fontSize(9).fillColor('#64748b').text(`Class operational days this month: ${operationalDays ?? 0}`);
+  doc.moveDown(0.4);
 
   const x0 = 30;
-  const nameW = 100;
-  const rollW = 42;
-  const dayW = 14;
+  const nameW = 88;
+  const rollW = 36;
+  const dayW = days.length > 28 ? 11 : 13;
+  const sumW = 26;
   const maxDays = days.length;
-  const pageW = doc.page.width - 60;
 
   let y = doc.y;
   doc.fontSize(7).fillColor('#64748b');
@@ -149,8 +151,12 @@ function buildMonthlyAttendancePdf({ classLabel, monthLabel, students, days, gri
   days.forEach((d, i) => {
     doc.text(String(d.day), x0 + nameW + rollW + i * dayW, y, { width: dayW, align: 'center' });
   });
+  const sumX = x0 + nameW + rollW + maxDays * dayW;
+  doc.text('Op.', sumX, y, { width: sumW, align: 'center' });
+  doc.text('Pres.', sumX + sumW, y, { width: sumW, align: 'center' });
+  doc.text('Abs.', sumX + sumW * 2, y, { width: sumW, align: 'center' });
   y += 12;
-  doc.moveTo(x0, y).lineTo(x0 + nameW + rollW + maxDays * dayW, y).strokeColor('#e2e8f0').stroke();
+  doc.moveTo(x0, y).lineTo(sumX + sumW * 3, y).strokeColor('#e2e8f0').stroke();
   y += 4;
 
   doc.fontSize(7).fillColor('#0f172a');
@@ -169,6 +175,11 @@ function buildMonthlyAttendancePdf({ classLabel, monthLabel, students, days, gri
         st === 'present' ? '#16a34a' : st === 'absent' ? '#dc2626' : st === 'late' ? '#ca8a04' : '#94a3b8';
       doc.fillColor(color).text(sym, x0 + nameW + rollW + i * dayW, y, { width: dayW, align: 'center' });
     });
+    const stats = statsByStudent?.[s.id] || { operationalDays: operationalDays ?? 0, present: 0, absent: 0 };
+    doc.fillColor('#0f172a');
+    doc.text(String(stats.operationalDays), sumX, y, { width: sumW, align: 'center' });
+    doc.fillColor('#16a34a').text(String(stats.present), sumX + sumW, y, { width: sumW, align: 'center' });
+    doc.fillColor('#dc2626').text(String(stats.absent), sumX + sumW * 2, y, { width: sumW, align: 'center' });
     doc.fillColor('#0f172a');
     y += 11;
   }
@@ -178,7 +189,10 @@ function buildMonthlyAttendancePdf({ classLabel, monthLabel, students, days, gri
   }
 
   doc.moveDown(1);
-  doc.fontSize(8).fillColor('#64748b').text('P = Present, A = Absent, L = Late, - = Not marked', x0);
+  doc.fontSize(8).fillColor('#64748b').text(
+    'P = Present, A = Absent, L = Late, - = Not marked · Op. = operational days · Pres./Abs. = totals on operational days',
+    x0,
+  );
 
   doc.end();
   return done;

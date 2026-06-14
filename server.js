@@ -20,6 +20,7 @@ const {
   metaRouter,
   notificationRouter,
   contactsRouter,
+  calendarRouter,
 } = require('./routes/index');
 
 connectDB();
@@ -68,6 +69,7 @@ app.use('/api/notes',        noteRouter);
 app.use('/api/users',        userRouter);
 app.use('/api/meta',         metaRouter);
 app.use('/api/notifications', notificationRouter);
+app.use('/api/calendar',       calendarRouter);
 app.use('/api/contacts',      contactsRouter);
 
 app.use((req, res) => res.status(404).json({ success: false, message: `Route ${req.originalUrl} not found` }));
