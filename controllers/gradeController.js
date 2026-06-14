@@ -2,6 +2,17 @@ const Grade = require('../models/Grade');
 const User = require('../models/User');
 const { asyncHandler } = require('../middleware/error');
 
+function letterGrade(marksObtained, totalMarks) {
+  const percentage = (marksObtained / totalMarks) * 100;
+  if (percentage >= 90) return 'O';
+  if (percentage >= 75) return 'A+';
+  if (percentage >= 65) return 'A';
+  if (percentage >= 55) return 'B+';
+  if (percentage >= 50) return 'B';
+  if (percentage >= 40) return 'C';
+  return 'F';
+}
+
 // @desc    Add grade
 // @route   POST /api/grades
 // @access  Staff only
@@ -25,14 +36,44 @@ exports.addGrade = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: grade });
 });
 
-// @desc    Bulk add grades
+// @desc    Bulk add grades for a class test
 // @route   POST /api/grades/bulk
 // @access  Staff only
 exports.bulkAddGrades = asyncHandler(async (req, res) => {
-  // req.body.grades = [{ student, subject, examType, marksObtained, totalMarks, ... }]
-  const gradeData = req.body.grades.map(g => ({ ...g, addedBy: req.user._id }));
-  const grades = await Grade.insertMany(gradeData);
-  res.status(201).json({ success: true, count: grades.length, data: grades });
+  const { grades, class: cls } = req.body;
+  if (!Array.isArray(grades) || grades.length === 0) {
+    return res.status(400).json({ success: false, message: 'grades array is required' });
+  }
+
+  const studentIds = [...new Set(grades.map((g) => String(g.student)))];
+  const users = await User.find({ _id: { $in: studentIds }, role: 'student' }).select('_id class');
+  const userById = new Map(users.map((u) => [String(u._id), u]));
+
+  const gradeData = [];
+  for (const g of grades) {
+    const user = userById.get(String(g.student));
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid student in grades list' });
+    }
+    if (cls && user.class !== cls) {
+      return res.status(400).json({
+        success: false,
+        message: 'One or more students are not enrolled in the selected class',
+      });
+    }
+    gradeData.push({
+      student: user._id,
+      subject: g.subject,
+      examType: g.examType,
+      marksObtained: g.marksObtained,
+      totalMarks: g.totalMarks,
+      grade: letterGrade(g.marksObtained, g.totalMarks),
+      addedBy: req.user._id,
+    });
+  }
+
+  const created = await Grade.insertMany(gradeData);
+  res.status(201).json({ success: true, count: created.length, data: created });
 });
 
 // @desc    Get grades for a student
