@@ -1,5 +1,9 @@
 const PDFDocument = require('pdfkit');
 
+const TABLE_BORDER = '#94a3b8';
+const TABLE_HEADER_BG = '#f1f5f9';
+const CELL_PAD = 5;
+
 function fmtMoney(n) {
   return `Rs. ${Number(n || 0).toLocaleString('en-IN')}`;
 }
@@ -28,51 +32,115 @@ function pdfHeader(doc, title, subtitle) {
   doc.moveDown(1);
 }
 
+function tableWidth(cols) {
+  return cols.reduce((a, b) => a + b, 0);
+}
+
+function colOffsets(cols) {
+  const offsets = [0];
+  for (let i = 0; i < cols.length; i += 1) offsets.push(offsets[i] + cols[i]);
+  return offsets;
+}
+
+function cellTextHeight(doc, text, colWidth) {
+  const inner = Math.max(colWidth - CELL_PAD * 2, 8);
+  return doc.heightOfString(String(text ?? '-'), { width: inner });
+}
+
+function drawRowBox(doc, x, y, cols, rowH) {
+  const w = tableWidth(cols);
+  const offs = colOffsets(cols);
+  doc.save();
+  doc.lineWidth(0.5).strokeColor(TABLE_BORDER);
+  doc.rect(x, y, w, rowH).stroke();
+  for (let i = 1; i < cols.length; i += 1) {
+    doc.moveTo(x + offs[i], y).lineTo(x + offs[i], y + rowH).stroke();
+  }
+  doc.restore();
+}
+
+function drawTableRow(doc, x, y, cols, rowH, cells, { header = false, fontSize = 9 } = {}) {
+  const offs = colOffsets(cols);
+  const w = tableWidth(cols);
+
+  if (header) {
+    doc.save();
+    doc.rect(x, y, w, rowH).fill(TABLE_HEADER_BG);
+    doc.restore();
+  }
+
+  drawRowBox(doc, x, y, cols, rowH);
+
+  doc.fontSize(fontSize).fillColor(header ? '#334155' : '#0f172a');
+  doc.font(header ? 'Helvetica-Bold' : 'Helvetica');
+
+  cells.forEach((cell, i) => {
+    doc.text(String(cell ?? '-'), x + offs[i] + CELL_PAD, y + CELL_PAD, {
+      width: cols[i] - CELL_PAD * 2,
+      lineBreak: true,
+    });
+  });
+
+  doc.font('Helvetica');
+  doc.y = y + rowH;
+}
+
+function renderBorderedTable(doc, { x0, cols, headers, rows, startY, pageTop = 50, pageBottom = 780 }) {
+  let y = startY;
+
+  const headerHeights = headers.map((h, i) => cellTextHeight(doc, h, cols[i]));
+  const headerH = Math.max(...headerHeights, 12) + CELL_PAD * 2;
+
+  const drawHeader = () => {
+    drawTableRow(doc, x0, y, cols, headerH, headers, { header: true });
+    y += headerH;
+  };
+
+  drawHeader();
+
+  for (const cells of rows) {
+    const heights = cells.map((c, i) => cellTextHeight(doc, c, cols[i]));
+    const rowH = Math.max(...heights, 12) + CELL_PAD * 2;
+
+    if (y + rowH > pageBottom) {
+      doc.addPage();
+      y = pageTop;
+      drawHeader();
+    }
+
+    drawTableRow(doc, x0, y, cols, rowH, cells);
+    y += rowH;
+  }
+
+  return y;
+}
+
 function buildClassFeesPdf({ classLabel, fees, summary }) {
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
   const done = collectPdf(doc);
+  const x0 = 40;
 
   pdfHeader(doc, 'Class Fees Report', classLabel);
   doc.fontSize(10).fillColor('#0f172a');
   doc.text(`Total: ${fmtMoney(summary.total)}  |  Collected: ${fmtMoney(summary.collected)}  |  Pending: ${fmtMoney(summary.pending)}`);
   doc.moveDown(0.8);
 
-  const cols = [120, 70, 80, 70, 70, 60];
-  const headers = ['Student', 'Roll', 'Term', 'Total', 'Paid', 'Status'];
-  let y = doc.y;
-  const x0 = 40;
-  doc.fontSize(9).fillColor('#64748b');
-  headers.forEach((h, i) => {
-    const x = x0 + cols.slice(0, i).reduce((a, b) => a + b, 0);
-    doc.text(h, x, y, { width: cols[i] - 4 });
-  });
-  y += 16;
-  doc.moveTo(x0, y).lineTo(555, y).strokeColor('#e2e8f0').stroke();
-  y += 6;
-
-  doc.fillColor('#0f172a').fontSize(9);
-  for (const f of fees) {
-    if (y > 750) {
-      doc.addPage();
-      y = 50;
-    }
-    const row = [
-      f.studentName || '-',
-      f.rollNumber || '-',
-      f.term || '-',
-      fmtMoney(f.totalAmount),
-      fmtMoney(f.paidAmount),
-      f.status || '-',
-    ];
-    row.forEach((cell, i) => {
-      const x = x0 + cols.slice(0, i).reduce((a, b) => a + b, 0);
-      doc.text(String(cell), x, y, { width: cols[i] - 4, ellipsis: true });
-    });
-    y += 14;
-  }
+  const cols = [28, 125, 58, 72, 68, 68, 96];
+  const headers = ['#', 'Student', 'Roll', 'Term', 'Total', 'Paid', 'Status'];
+  const rows = fees.map((f, idx) => [
+    idx + 1,
+    f.studentName || '-',
+    f.rollNumber || '-',
+    f.term || '-',
+    fmtMoney(f.totalAmount),
+    fmtMoney(f.paidAmount),
+    f.status || '-',
+  ]);
 
   if (!fees.length) {
-    doc.text('No fee records for this class.', x0, y);
+    doc.text('No fee records for this class.', x0, doc.y);
+  } else {
+    renderBorderedTable(doc, { x0, cols, headers, rows, startY: doc.y });
   }
 
   doc.end();
@@ -82,47 +150,28 @@ function buildClassFeesPdf({ classLabel, fees, summary }) {
 function buildClassStudentsPdf({ classLabel, students }) {
   const doc = new PDFDocument({ size: 'A4', margin: 40 });
   const done = collectPdf(doc);
+  const x0 = 40;
 
   pdfHeader(doc, 'Student List', classLabel);
   doc.fontSize(10).fillColor('#64748b').text(`Total students: ${students.length}`);
   doc.moveDown(0.6);
 
-  const cols = [110, 55, 75, 45, 90, 85];
-  const headers = ['Name', 'Roll', 'Class', 'Board', 'Parent', 'Phone'];
-  let y = doc.y;
-  const x0 = 40;
-  doc.fontSize(9).fillColor('#64748b');
-  headers.forEach((h, i) => {
-    const x = x0 + cols.slice(0, i).reduce((a, b) => a + b, 0);
-    doc.text(h, x, y, { width: cols[i] - 4 });
-  });
-  y += 16;
-  doc.moveTo(x0, y).lineTo(555, y).strokeColor('#e2e8f0').stroke();
-  y += 6;
-
-  doc.fillColor('#0f172a').fontSize(9);
-  for (const s of students) {
-    if (y > 750) {
-      doc.addPage();
-      y = 50;
-    }
-    const row = [
-      s.name || '-',
-      s.rollNumber || '-',
-      s.classLabel || '-',
-      s.board || '-',
-      s.parentName || '-',
-      s.parentPhone || '-',
-    ];
-    row.forEach((cell, i) => {
-      const x = x0 + cols.slice(0, i).reduce((a, b) => a + b, 0);
-      doc.text(String(cell), x, y, { width: cols[i] - 4, ellipsis: true });
-    });
-    y += 14;
-  }
+  const cols = [28, 130, 58, 72, 55, 98, 74];
+  const headers = ['#', 'Name', 'Roll', 'Class', 'Board', 'Parent', 'Phone'];
+  const rows = students.map((s, idx) => [
+    idx + 1,
+    s.name || '-',
+    s.rollNumber || '-',
+    s.classLabel || '-',
+    s.board || '-',
+    s.parentName || '-',
+    s.parentPhone || '-',
+  ]);
 
   if (!students.length) {
-    doc.text('No students in this class.', x0, y);
+    doc.text('No students in this class.', x0, doc.y);
+  } else {
+    renderBorderedTable(doc, { x0, cols, headers, rows, startY: doc.y });
   }
 
   doc.end();
