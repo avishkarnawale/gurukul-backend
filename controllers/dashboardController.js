@@ -11,33 +11,46 @@ const { asyncHandler } = require('../middleware/error');
 // @route   GET /api/dashboard/admin
 // @access  Staff/Admin
 exports.adminDashboard = asyncHandler(async (req, res) => {
-  // Run all queries in parallel
+  const since = new Date();
+  since.setDate(since.getDate() - 7);
+
   const [
     totalStudents,
     totalStaff,
     pendingFeesResult,
-    sevenDayAttendance,
+    attendanceAgg,
     recentNotices,
   ] = await Promise.all([
     User.countDocuments({ role: 'student', isActive: true }),
     User.countDocuments({ role: { $in: ['staff', 'admin'] }, isActive: true }),
     Fee.aggregate([
       { $match: { status: { $in: ['pending', 'partial'] } } },
-      { $group: { _id: null, total: { $sum: '$totalAmount' }, paid: { $sum: '$paidAmount' } } }
+      { $group: { _id: null, total: { $sum: '$totalAmount' }, paid: { $sum: '$paidAmount' } } },
     ]),
-    (async () => {
-      const since = new Date(); since.setDate(since.getDate() - 7);
-      const records = await Attendance.find({ date: { $gte: since } });
-      const total = records.length;
-      const present = records.filter(r => r.status === 'present').length;
-      return total > 0 ? Math.round((present / total) * 100) : 0;
-    })(),
+    Attendance.aggregate([
+      { $match: { date: { $gte: since } } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          present: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } },
+        },
+      },
+    ]),
     Announcement.find({ $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }] })
-      .sort({ isPinned: -1, createdAt: -1 }).limit(5).populate('postedBy', 'name'),
+      .sort({ isPinned: -1, createdAt: -1 })
+      .limit(5)
+      .populate('postedBy', 'name')
+      .lean(),
   ]);
 
   const pendingFees = pendingFeesResult[0]
     ? pendingFeesResult[0].total - pendingFeesResult[0].paid
+    : 0;
+
+  const attRow = attendanceAgg[0];
+  const sevenDayAttendance = attRow?.total > 0
+    ? Math.round((attRow.present / attRow.total) * 100)
     : 0;
 
   res.json({
@@ -64,46 +77,58 @@ exports.adminDashboard = asyncHandler(async (req, res) => {
 exports.studentDashboard = asyncHandler(async (req, res) => {
   const studentId = req.user._id;
   const studentClass = req.user.class;
+  const now = new Date();
+
+  const noticeFilter = {
+    $and: [
+      { $or: [{ targetAudience: 'all' }, { targetAudience: 'students' }, { targetClass: studentClass }] },
+      { $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
+    ],
+  };
 
   const [
     attendanceRecords,
-    pendingHomework,
+    feesAgg,
     fees,
     notices,
+    upcomingHomework,
   ] = await Promise.all([
-    Attendance.find({ student: studentId }),
-    (async () => {
-      const upcoming = await Homework.find({ class: studentClass, dueDate: { $gte: new Date() } });
-      return upcoming.filter(hw => !hw.submissions.find(s => s.student.equals(studentId)));
-    })(),
-    Fee.find({ student: studentId, status: { $in: ['pending', 'partial'] } }),
-    Announcement.find({
-      $and: [
-        { $or: [{ targetAudience: 'all' }, { targetAudience: 'students' }, { targetClass: studentClass }] },
-        { $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }] },
-      ]
-    }).sort({ isPinned: -1, createdAt: -1 }).limit(5).populate('postedBy', 'name'),
+    Attendance.find({ student: studentId }).select('date status subject updatedAt').lean(),
+    Fee.aggregate([
+      { $match: { student: studentId, status: { $in: ['pending', 'partial'] } } },
+      { $group: { _id: null, due: { $sum: { $subtract: ['$totalAmount', '$paidAmount'] } } } },
+    ]),
+    Fee.find({ student: studentId, status: { $in: ['pending', 'partial'] } })
+      .select('term totalAmount paidAmount status dueDate')
+      .lean(),
+    Announcement.find(noticeFilter)
+      .sort({ isPinned: -1, createdAt: -1 })
+      .limit(5)
+      .populate('postedBy', 'name')
+      .lean(),
+    Homework.find({ class: studentClass, dueDate: { $gte: now } })
+      .select('title subject dueDate submissions')
+      .sort({ dueDate: 1 })
+      .limit(5)
+      .lean(),
   ]);
 
-  // Attendance % (one status per calendar day)
   const dedupedAttendance = dedupeByDay(attendanceRecords);
   const totalDays = dedupedAttendance.length;
   const presentDays = dedupedAttendance.filter((r) => r.status === 'present').length;
   const attendancePercent = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
 
-  // Pending fees total
-  const feesDue = fees.reduce((s, f) => s + f.pendingAmount, 0);
+  const feesDue = feesAgg[0]?.due ?? 0;
+  const pendingHomeworkCount = upcomingHomework.filter(
+    (hw) => !hw.submissions.some((s) => String(s.student) === String(studentId)),
+  ).length;
 
-  // Upcoming homework
-  const upcomingHomework = await Homework.find({ class: studentClass, dueDate: { $gte: new Date() } })
-    .sort({ dueDate: 1 }).limit(5).populate('postedBy', 'name');
-
-  const upcomingWithStatus = upcomingHomework.map(hw => ({
+  const upcomingWithStatus = upcomingHomework.map((hw) => ({
     _id: hw._id,
     title: hw.title,
     subject: hw.subject,
     dueDate: hw.dueDate,
-    submitted: !!hw.submissions.find(s => s.student.equals(studentId)),
+    submitted: hw.submissions.some((s) => String(s.student) === String(studentId)),
   }));
 
   const homeworkCards = upcomingWithStatus.map((h) => ({
@@ -154,7 +179,7 @@ exports.studentDashboard = asyncHandler(async (req, res) => {
       class: studentClass,
       rollNumber: req.user.rollNumber,
       attendance: { percentage: attendancePercent, present: presentDays, total: totalDays },
-      pendingHomework: pendingHomework.length,
+      pendingHomework: pendingHomeworkCount,
       feesDue,
       noticesCount: notices.length,
       upcomingHomework: upcomingWithStatus,

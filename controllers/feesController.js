@@ -48,7 +48,8 @@ exports.getAllFees = asyncHandler(async (req, res) => {
   }
   const fees = await Fee.find(filter)
     .populate('student', 'name rollNumber class')
-    .sort({ dueDate: 1 });
+    .sort({ dueDate: 1 })
+    .lean();
   res.json({ success: true, count: fees.length, data: fees });
 });
 
