@@ -1,6 +1,7 @@
 const CalendarEvent = require('../models/CalendarEvent');
 const { asyncHandler } = require('../middleware/error');
 const { startOfDay } = require('../utils/date');
+const { parseClassId } = require('../utils/classes');
 
 function normalizeDateStr(dateStr) {
   const s = String(dateStr || '').trim();
@@ -13,24 +14,58 @@ function normalizeDateStr(dateStr) {
   return s;
 }
 
+function normalizeTargetClass(value) {
+  if (value === undefined || value === null || value === '' || value === 'all') return null;
+  if (!parseClassId(value)) {
+    const err = new Error('Invalid class');
+    err.statusCode = 400;
+    throw err;
+  }
+  return value;
+}
+
+function buildCalendarFilter(req) {
+  const { year, class: cls } = req.query;
+  const and = [];
+
+  if (year) {
+    and.push({ date: { $gte: `${year}-01-01`, $lte: `${year}-12-31` } });
+  }
+
+  if (req.user.role === 'student') {
+    const studentClass = req.user.class;
+    and.push({
+      $or: [
+        { targetClass: null },
+        { targetClass: { $exists: false } },
+        { targetClass: '' },
+        ...(studentClass ? [{ targetClass: studentClass }] : []),
+      ],
+    });
+  } else if (cls && cls !== 'all') {
+    and.push({
+      $or: [{ targetClass: null }, { targetClass: '' }, { targetClass: cls }],
+    });
+  }
+
+  return and.length ? { $and: and } : {};
+}
+
 // @route GET /api/calendar
 exports.getCalendarEvents = asyncHandler(async (req, res) => {
-  const { year } = req.query;
-  const filter = {};
-  if (year) {
-    filter.date = { $gte: `${year}-01-01`, $lte: `${year}-12-31` };
-  }
+  const filter = buildCalendarFilter(req);
 
   const events = await CalendarEvent.find(filter)
     .populate('createdBy', 'name')
-    .sort({ date: 1, createdAt: 1 });
+    .sort({ date: 1, createdAt: 1 })
+    .lean();
 
   res.json({ success: true, count: events.length, data: events });
 });
 
 // @route POST /api/calendar
 exports.createCalendarEvent = asyncHandler(async (req, res) => {
-  const { title, date, description } = req.body;
+  const { title, date, description, targetClass } = req.body;
   if (!title?.trim()) {
     return res.status(400).json({ success: false, message: 'Event name is required' });
   }
@@ -39,6 +74,7 @@ exports.createCalendarEvent = asyncHandler(async (req, res) => {
     title: title.trim(),
     date: normalizeDateStr(date),
     description: description?.trim() || '',
+    targetClass: normalizeTargetClass(targetClass),
     createdBy: req.user._id,
   });
 
@@ -51,6 +87,7 @@ exports.updateCalendarEvent = asyncHandler(async (req, res) => {
   if (req.body.title !== undefined) updates.title = String(req.body.title).trim();
   if (req.body.date !== undefined) updates.date = normalizeDateStr(req.body.date);
   if (req.body.description !== undefined) updates.description = String(req.body.description).trim();
+  if (req.body.targetClass !== undefined) updates.targetClass = normalizeTargetClass(req.body.targetClass);
 
   const event = await CalendarEvent.findByIdAndUpdate(req.params.id, updates, {
     new: true,

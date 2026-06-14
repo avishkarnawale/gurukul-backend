@@ -103,16 +103,25 @@ exports.getStudentGrades = asyncHandler(async (req, res) => {
 });
 
 // @desc    Get grades for a class/subject (staff view)
-// @route   GET /api/grades/class
+// @route   GET /api/grades/class?class=Class 10|SSC
 // @access  Staff only
 exports.getClassGrades = asyncHandler(async (req, res) => {
-  const { subject, examType, semester } = req.query;
+  const { subject, examType, semester, class: cls } = req.query;
   const filter = {};
   if (subject) filter.subject = subject;
   if (examType) filter.examType = examType;
   if (semester) filter.semester = Number(semester);
 
-  const grades = await Grade.find(filter).populate('student', 'name rollNumber class').sort({ 'student.rollNumber': 1 });
+  if (cls) {
+    const studentIds = await User.find({ role: 'student', class: cls }).distinct('_id');
+    filter.student = { $in: studentIds };
+  }
+
+  const grades = await Grade.find(filter)
+    .populate('student', 'name rollNumber class')
+    .sort({ createdAt: -1 })
+    .lean();
+
   res.json({ success: true, count: grades.length, data: grades });
 });
 

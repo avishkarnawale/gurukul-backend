@@ -91,7 +91,7 @@ metaRouter.get('/classes', protect, authorize('staff', 'admin'), getClasses);
 
 // ── Fees ─────────────────────────────────────────────────────────────────────
 const feesRouter = express.Router();
-const { createFee, createBulkFees, recordPayment, getMyFees, getMyFeeReceipt, assignMissingFees, getStudentFees, getAllPendingFees, getAllFees, updateFee, deleteFee } = require('../controllers/feesController');
+const { createFee, createBulkFees, recordPayment, getMyFees, getMyFeeReceipt, getAdminFeeReceipt, assignMissingFees, getStudentFees, getAllPendingFees, getAllFees, updateFee, deleteFee } = require('../controllers/feesController');
 const { exportClassFeesPdf } = require('../controllers/exportController');
 // Fees management is owner/admin only — teachers (staff) have no fee access.
 feesRouter.get('/', protect, authorize('admin'), getAllFees);
@@ -103,6 +103,7 @@ feesRouter.get('/me', protect, authorize('student'), getMyFees);
 feesRouter.get('/me/:feeId/receipt/:paymentId', protect, authorize('student'), getMyFeeReceipt);
 feesRouter.get('/pending', protect, authorize('admin'), getAllPendingFees);
 feesRouter.get('/student/:studentId', protect, authorize('admin'), getStudentFees);
+feesRouter.get('/:feeId/receipt/:paymentId', protect, authorize('admin'), getAdminFeeReceipt);
 feesRouter.post('/:id/pay', protect, authorize('admin'), recordPayment);
 feesRouter.put('/:id', protect, authorize('admin'), updateFee);
 feesRouter.delete('/:id', protect, authorize('admin'), deleteFee);

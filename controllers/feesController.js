@@ -89,24 +89,13 @@ function resolvePayment(fee, paymentId) {
   return p && p.amount > 0 ? p : null;
 }
 
-// @desc    Download PDF receipt (student's own fee only)
-// @route   GET /api/fees/me/:feeId/receipt/:paymentId
-// @access  Student
-exports.getMyFeeReceipt = asyncHandler(async (req, res) => {
-  const fee = await Fee.findOne({ _id: req.params.feeId, student: req.user._id });
-  if (!fee) return res.status(404).json({ success: false, message: 'Fee record not found' });
-
-  const payment = resolvePayment(fee, req.params.paymentId);
-  if (!payment) {
-    return res.status(404).json({ success: false, message: 'Payment receipt not found' });
-  }
-
+async function buildAndSendFeeReceipt(res, fee, payment, student) {
   const { buildReceiptPdf } = require('../utils/feeReceiptPdf');
   const pdf = await buildReceiptPdf({
     receiptNo: payment.receiptNo,
-    studentName: req.user.name,
-    rollNumber: req.user.rollNumber,
-    studentClass: formatClassLabel(req.user.class) || req.user.class || '',
+    studentName: student.name,
+    rollNumber: student.rollNumber,
+    studentClass: formatClassLabel(student.class) || student.class || '',
     term: fee.term,
     description: fee.description,
     amount: payment.amount,
@@ -121,6 +110,41 @@ exports.getMyFeeReceipt = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(pdf);
+}
+
+// @desc    Download PDF receipt (student's own fee only)
+// @route   GET /api/fees/me/:feeId/receipt/:paymentId
+// @access  Student
+exports.getMyFeeReceipt = asyncHandler(async (req, res) => {
+  const fee = await Fee.findOne({ _id: req.params.feeId, student: req.user._id });
+  if (!fee) return res.status(404).json({ success: false, message: 'Fee record not found' });
+
+  const payment = resolvePayment(fee, req.params.paymentId);
+  if (!payment) {
+    return res.status(404).json({ success: false, message: 'Payment receipt not found' });
+  }
+
+  await buildAndSendFeeReceipt(res, fee, payment, req.user);
+});
+
+// @desc    Download PDF receipt for any student (admin)
+// @route   GET /api/fees/:feeId/receipt/:paymentId
+// @access  Admin
+exports.getAdminFeeReceipt = asyncHandler(async (req, res) => {
+  const fee = await Fee.findById(req.params.feeId).populate('student', 'name rollNumber class');
+  if (!fee) return res.status(404).json({ success: false, message: 'Fee record not found' });
+
+  const payment = resolvePayment(fee, req.params.paymentId);
+  if (!payment) {
+    return res.status(404).json({ success: false, message: 'Payment receipt not found' });
+  }
+
+  const student = fee.student;
+  if (!student) {
+    return res.status(404).json({ success: false, message: 'Student not found for this fee' });
+  }
+
+  await buildAndSendFeeReceipt(res, fee, payment, student);
 });
 
 // @desc    Create fees for students who have none for this term
